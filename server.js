@@ -1,56 +1,72 @@
-const express = require("express");
-const cors = require("cors");
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+
 const app = express();
+const PORT = 3000;
 
+app.use(morgan('dev'));
 app.use(cors());
-app.use(express.json()); // đọc body JSON
+app.use(express.json());
 
-app.use((req, res, next) => {
-    console.log(req.method, req.url);
-    next(); // bắt buộc, thiếu là request bị treo
-});
+function createError(status, message) {
+    const err = new Error(message);
+    err.status = status;
+    return err;
+}
+
+function validateJob(req, res, next) {
+    const { title } = req.body;
+    if (!title || title.trim() === "") {
+        return res.status(400).json({ error: "Title không được trống"})
+    }
+    next();
+}
+
+function validateId(req, res, next) {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return next(createError(400, "ID phải là số"))
+    req.jobId = id;
+    next();
+}
 
 app.get("/", (req, res) => res.send("Hello API"));
-
-// GET / users/5?role=admin
-app.get("/users/:id", (req, res) => {
-    const { id } = req.params;
-    const { role } = req.query;
-    res.json({ id, role });
-});
-
-// POST /users + body {"name":"An"}
-app.post("/users", (req, res) => {
-    const { name } = req.body;
-    res.status(201).json({ name });
-});
-
 let jobs = [{ id: 1, title: "Frontend Intern" }];
-
 app.get("/jobs", (req, res) => res.json(jobs));
 
-app.post("/jobs", (req, res) => {
-    const job = { id: Date.now(), ...req.body };
+app.get("/jobs/:id", validateId, (req, res, next) => {
+    const job = jobs.find(j => j.id === req.jobId);
+    if (!job) return next(createError(404, "Không tìm thấy job"));
+    res.json(job);
+});
+
+app.post("/jobs", validateJob, (req, res) => {
+    const job = { id: Date.now(), ...req.body, title: req.body.title.trim() };
     jobs.push(job);
     res.status(201).json(job);
 });
 
-app.put("/jobs/:id", (req, res) => {
-    jobs = jobs.map(j => j.id == req.params.id ? { ...j, ...req.body } : j);
-    res.json({ ok: true });
+app.put("/jobs/:id", validateId, validateJob, (req, res, next) => {
+    const job = jobs.find(j => j.id === req.jobId);
+    if (!job) return next(createError(404, "Không tìm thấy job"));
+    Object.assign(job, req.body, { title: req.body.title.trim() });
+    res.json(job);
 });
 
-app.delete("/jobs/:id", (req, res) => {
-    jobs = jobs.filter(j => j.id != req.params.id);
+app.delete("/jobs/:id", validateId, (req, res, next) => {
+    const index = jobs.findIndex(j => j.id === req.jobId);
+    if (index === -1) return next(createError(404, "Không tìm thấy job"));
+    jobs.splice(index, 1);
     res.status(204).end();
 });
 
-// 404: Không route nào khớp
-app.use((req, res) => res.status(404).json({ error: "Not found" }));
-
-// error handler: bắt buộc đủ 4 tham số
-app.use((err, req, res, next) => {
-    res.status(500).json({ error: err.message });
+app.use((req, res, next) => {
+    next(createError(404, "Không tìm thấy route"));
 });
 
-app.listen(3000, () => console.log("PORT 3000"));
+app.use((err, req, res, next) => {
+    console.error("X", err.message);
+    res.status(err.status || 500).json({ error: err.message || "Lỗi server" });
+});
+
+app.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));
