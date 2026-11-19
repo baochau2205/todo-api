@@ -2,9 +2,9 @@
   "name": "express-jobs-api",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "dev": "node --watch server.js",
+    "dev": "nodemon server.js",
     "start": "node server.js"
   },
   "keywords": [],
@@ -15,5 +15,8 @@
     "cors": "^2.8.6",
     "express": "^5.3.0",
     "morgan": "^1.12.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
   }
 }
