@@ -39,7 +39,6 @@ function validateId(req, res, next) {
 }
 
 app.get("/", (req, res) => sendSuccess(res, { message: "Jobs API" }));
-let jobs = [{ id: 1, title: "Frontend Intern" }];
 const jobsRouter = express.Router();
 jobsRouter.get("/", async (req, res, next) => {
     try {
@@ -51,12 +50,26 @@ jobsRouter.get("/", async (req, res, next) => {
     } catch (err) {next(err);}
 });
 
-jobsRouter.get("/:id", validateId, async (req, res, next) => {
+jobsRouter.get("/mine", requireAuth, async (req, res, next) => {
     try {
-        const result = await pool.query("SELECT *FROM jobs WHERE id = $1", [req.jobId]);
-        if (result.rows.length === 0) return next(createError(404, " Not Found"));
-        sendSuccess(res, result.rows[0]);
-    } catch (err) { next(err);}
+        const result = await pool.query(
+            "SELECT * FROM jobs WHERE created_by = $1 ORDER BY id DESC",
+            [req.user.id]
+        );
+        sendSuccess(res, result.rows);
+    } catch (err) { next(err); }
+});
+
+jobsRouter.get("/", async (req, res, next) => {
+    try {
+        const { search } = req.query;
+        const base = `SELECT jobs.*, users.email AS posted_by
+                    FROM jobs LEFT JOIN users ON users.id = jobs.created_by`;
+        const result = search
+        ? await pool.query(`${base} WHERE jobs.title ILIKE $1 ORDER BY jobs.id`, [`%${search}%`])
+        : await pool.query(`${base} ORDER BY jobs.id`);
+        sendSuccess(res, result.rows);
+    } catch (err) { next(err); }
 });
 
 function requireAuth(req, res, next) {
@@ -72,19 +85,33 @@ function requireAuth(req, res, next) {
         next(createError(401, "Invalid or expired token"));
     }
 }
-jobsRouter.post("/", requireAuth, validateJob, async (req, res, next) => {
+
+jobsRouter.post("/:id/apply", requireAuth, validateId, async (req, res, next) => {
     try {
-        const { title, company, salary, remote } = req.body;
         const result = await pool.query(
-            `INSERT INTO jobs (title, company, salary, remote, created_by)
-            VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [title.trim(), company, salary, remote ?? false, req.user.id]
+            "INSERT INTO applications (user_id, job_id) VALUES ($1, $2) RETURNING *",
+            [req.user.id, req.jobId]
         );
-    sendSuccess(res, result.rows[0], 201);
-    } catch (err) {next(err);}
+        sendSuccess(res, result.rows[0], 201);
+    } catch (err) {
+        if (err.code === "23505") return next(createError(409, "Applied to this job"));
+        if (err.code === "23503") return next(createError(404, "Job Not Found"));
+        next(err);
+    }
 });
 
-jobsRouter.put("/:id", requireAuth, validateId, validateJob, async (req,res,next) => {
+async function requireOwner(req, res, next) {
+    try {
+        const result = await pool.query("SELECT created_by FROM jobs WHERE id = $1", [req.jobId]);
+        if (result.rows.length === 0) return next(createError(404, "Job Not Found"));
+        if (result.rows[0].created_by !== req.user.id) {
+            return next(createError(403, "No access to this job"));
+        }
+        next();
+    } catch (err) {next(err); }
+}
+
+jobsRouter.put("/:id", requireAuth, validateId, requireOwner, validateJob, async (req,res,next) => {
     try {
         const { title, company, salary, remote } = req.body;
         const result = await pool.query(
@@ -101,7 +128,7 @@ jobsRouter.put("/:id", requireAuth, validateId, validateJob, async (req,res,next
     } catch (err) {next(err); }
 });
 
-jobsRouter.delete("/:id", requireAuth, validateId, async (req, res, next) => {
+jobsRouter.delete("/:id", requireAuth, validateId, requireOwner, async (req, res, next) => {
     try {
         const result = await pool.query("DELETE FROM jobs WHERE id = $1 RETURNING *", [req.jobId]);
         if (result.rowCount === 0) return next(createError(404, "Job Not Found"));
@@ -109,7 +136,6 @@ jobsRouter.delete("/:id", requireAuth, validateId, async (req, res, next) => {
     } catch (err) {next(err); }
 });
 
-const users = []; 
 const authRouter = express.Router();
 
 authRouter.post("/register", async (req, res, next) => {
@@ -148,6 +174,28 @@ authRouter.post("/login", async (req, res, next) => {
 
 authRouter.get("/me", requireAuth, (req, res) => {
     sendSuccess(res, req.user);
+});
+
+jobsRouter.get("/:id", validateId, async (req, res, next) => {
+    try {
+        const result = await pool.query("SELECT * FROM jobs WHERE id = $1", [req.jobId]);
+        if (result.rows.length === 0) return next(createError(404, "Job Not Found"));
+        sendSuccess(res, result.rows[0]);
+    } catch (err) { next(err); }
+});
+
+authRouter.get("/me/applications", requireAuth, async (req, res, next) => {
+    try {
+        const result = await pool.query(
+            `SELECT applications.id, applications.status, applications.created_at,
+                    jobs.title, jobs.company
+             FROM applications JOIN jobs ON jobs.id = applications.job_id
+             WHERE applications.user_id = $1
+             ORDER BY applications.created_at DESC`,
+            [req.user.id]
+        );
+        sendSuccess(res, result.rows);
+    } catch (err) { next(err); }
 });
 
 app.use("/api/v1/jobs", jobsRouter);
