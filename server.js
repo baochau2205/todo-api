@@ -1,4 +1,6 @@
 require("dotenv").config();
+const upload = require('./middleware/upload');
+const multer = require('multer');
 const express = require('express');
 const pool = require("./db");
 const cors = require('cors');
@@ -40,15 +42,6 @@ function validateId(req, res, next) {
 
 app.get("/", (req, res) => sendSuccess(res, { message: "Jobs API" }));
 const jobsRouter = express.Router();
-jobsRouter.get("/", async (req, res, next) => {
-    try {
-        const {search} = req.query;
-        const result = search
-        ? await pool.query("SELECT * FROM jobs WHERE title ILIKE $1 ORDER BY id", [`%${search}%`])
-        : await pool.query("SELECT * FROM jobs ORDER BY id");
-        sendSuccess(res, result.rows);
-    } catch (err) {next(err);}
-});
 
 jobsRouter.get("/mine", requireAuth, async (req, res, next) => {
     try {
@@ -86,11 +79,12 @@ function requireAuth(req, res, next) {
     }
 }
 
-jobsRouter.post("/:id/apply", requireAuth, validateId, async (req, res, next) => {
+jobsRouter.post("/:id/apply", requireAuth, validateId, upload.single('cv'), async (req, res, next) => {
     try {
+        const cvUrl = req.file ? `/uploads/${req.file.filename}` : null;
         const result = await pool.query(
-            "INSERT INTO applications (user_id, job_id) VALUES ($1, $2) RETURNING *",
-            [req.user.id, req.jobId]
+            "INSERT INTO applications (user_id, job_id, cv_url) VALUES ($1, $2, $3) RETURNING *",
+            [req.user.id, req.jobId, cvUrl]
         );
         sendSuccess(res, result.rows[0], 201);
     } catch (err) {
@@ -198,6 +192,14 @@ authRouter.get("/me/applications", requireAuth, async (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+app.use('/uploads', express.static('uploads'));
+app.post('/api/v1/upload', requireAuth, upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ success: false, error: "File not selected"});
+    }
+    sendSuccess(res, { url: `/uploads/${req.file.filename}`}, 201);
+});
+
 app.use("/api/v1/jobs", jobsRouter);
 app.use("/api/v1/auth", authRouter);
 app.get("/api/v1/health/db", async (req, res, next) => {
@@ -213,6 +215,10 @@ app.use((req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+    if ( err instanceof multer.MulterError) {
+        const msg = err.code === 'LIMIT_FILE_SIZE' ? '2MB are allowed': err.message;
+        return res.status(400).json({ success: false, error: msg});
+    }
     const status = err.status || 500;
     if ( status === 500) console.error(err);
     res.status(status).json({
