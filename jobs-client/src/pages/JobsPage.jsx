@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
 import { useAuth } from "../AuthContext";
+import { socket } from "../socket";
+import ApplyButton from "../components/ApplyButton";
 
 export default function JobsPage() {
     const { user } = useAuth();
@@ -15,14 +17,21 @@ export default function JobsPage() {
             .finally(() => setLoading(false));
     }, []);
 
-    async function handleApply(id) {
-        try {
-            await apiFetch(`/jobs/${id}/apply`, { method: "POST" });
-            setMessage("Đã ứng tuyển");
-        } catch (err) {
-            setMessage(err.message);
+    // Buổi 22: nghe job mới / job bị xoá
+    useEffect(() => {
+        function onCreated(job) {
+            setJobs((prev) => (prev.some((j) => j.id === job.id) ? prev : [...prev, job]));
         }
-    }
+        function onDeleted({ id }) {
+            setJobs((prev) => prev.filter((j) => j.id !== id));
+        }
+        socket.on("job:created", onCreated);
+        socket.on("job:deleted", onDeleted);
+        return () => {
+            socket.off("job:created", onCreated);
+            socket.off("job:deleted", onDeleted);
+        };
+    }, []);
 
     if (loading) return <p>Đang tải job...</p>;
 
@@ -35,9 +44,7 @@ export default function JobsPage() {
                 {jobs.map((job) => (
                     <li key={job.id}>
                         <b>{job.title}</b> · {job.company} · đăng bởi {job.posted_by ?? "ẩn danh"}
-                        {user && user.id !== job.created_by && (
-                            <button onClick={() => handleApply(job.id)}>Ứng tuyển</button>
-                        )}
+                        {user && user.id !== job.created_by && <ApplyButton jobId={job.id} />}
                     </li>
                 ))}
             </ul>

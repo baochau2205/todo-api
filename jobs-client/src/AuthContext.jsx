@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { apiFetch } from "./api";
+import { socket } from "./socket";
 
 const AuthContext = createContext(null);
 
@@ -14,6 +15,11 @@ export function AuthProvider({ children }) {
             .catch(() => localStorage.removeItem("token"))
             .finally(() => setLoading(false));
     }, []);
+        useEffect(() => {
+        socket.auth = { token: localStorage.getItem("token") };
+        socket.disconnect().connect();                          
+        return () => socket.disconnect();
+    }, [user]);
 
     async function login(email, password) {
         const data = await apiFetch("/auth/login", {

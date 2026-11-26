@@ -7,6 +7,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
 const PORT = 3000;
@@ -65,6 +67,20 @@ jobsRouter.get("/", async (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+jobsRouter.post("/", requireAuth, validateJob, async (req, res, next) => {
+    try {
+        const { title, company, salary, remote } = req.body;
+        const result = await pool.query(
+            `INSERT INTO jobs (title, company, salary, remote, created_by)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [title.trim(), company, salary, remote ?? false, req.user.id]
+        );
+        const job = result.rows[0];
+        req.app.get('io').emit('job:created', { ...job, posted_by: req.user.email });
+        sendSuccess(res, job, 201);
+    } catch (err) { next(err); }
+});
+
 function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
     const[type, token] = header.split(" ");
@@ -86,6 +102,16 @@ jobsRouter.post("/:id/apply", requireAuth, validateId, upload.single('cv'), asyn
             "INSERT INTO applications (user_id, job_id, cv_url) VALUES ($1, $2, $3) RETURNING *",
             [req.user.id, req.jobId, cvUrl]
         );
+
+        // Buổi 22: báo riêng cho chủ job
+        const jobRes = await pool.query("SELECT created_by, title FROM jobs WHERE id = $1", [req.jobId]);
+        const job = jobRes.rows[0];
+        req.app.get('io').to(`user:${job.created_by}`).emit('application:new', {
+            jobId: req.jobId,
+            jobTitle: job.title,
+            from: req.user.email,
+        });
+
         sendSuccess(res, result.rows[0], 201);
     } catch (err) {
         if (err.code === "23505") return next(createError(409, "Applied to this job"));
@@ -126,6 +152,7 @@ jobsRouter.delete("/:id", requireAuth, validateId, requireOwner, async (req, res
     try {
         const result = await pool.query("DELETE FROM jobs WHERE id = $1 RETURNING *", [req.jobId]);
         if (result.rowCount === 0) return next(createError(404, "Job Not Found"));
+        req.app.get('io').emit('job:deleted', { id: req.jobId }); // Buổi 22
         sendSuccess(res, result.rows[0]);
     } catch (err) {next(err); }
 });
@@ -195,7 +222,7 @@ authRouter.get("/me/applications", requireAuth, async (req, res, next) => {
 app.use('/uploads', express.static('uploads'));
 app.post('/api/v1/upload', requireAuth, upload.single('file'), (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ success: false, error: "File not selected"});
+        return res.status(400).json({ success: false, data: null, error: "File not selected" });
     }
     sendSuccess(res, { url: `/uploads/${req.file.filename}`}, 201);
 });
@@ -216,8 +243,8 @@ app.use((req, res, next) => {
 
 app.use((err, req, res, next) => {
     if ( err instanceof multer.MulterError) {
-        const msg = err.code === 'LIMIT_FILE_SIZE' ? '2MB are allowed': err.message;
-        return res.status(400).json({ success: false, error: msg});
+        const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Max file size is 2MB' : err.message;
+        return res.status(400).json({ success: false, data: null, error: msg });
     }
     const status = err.status || 500;
     if ( status === 500) console.error(err);
@@ -228,4 +255,26 @@ app.use((err, req, res, next) => {
     });
 });
 
-app.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: 'http://localhost:5173' },
+});
+app.set('io', io);
+
+io.use((socket, next) => {                                  
+    const token = socket.handshake.auth.token;
+    if (token) {
+        try {
+            socket.user = jwt.verify(token, process.env.JWT_SECRET);
+        } catch { }
+    }
+    next();
+});
+
+io.on('connection', (socket) => {
+    console.log('connected', socket.id, socket.user?.email ?? 'guest'); 
+    if (socket.user) socket.join(`user:${socket.user.id}`);              
+    socket.on('disconnect', () => console.log('disconnected', socket.id));
+});
+
+server.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));

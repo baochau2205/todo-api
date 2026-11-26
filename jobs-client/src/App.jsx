@@ -5,6 +5,7 @@ import RequireAuth from "./RequireAuth";
 import JobsPage from "./pages/JobsPage";
 import MyJobsPage from "./pages/MyJobsPage";
 import MyApplicationsPage from "./pages/MyApplicationsPage";
+import NotificationBadge from "./components/NotificationBadge";
 
 export default function App() {
     const { user } = useAuth();
@@ -12,7 +13,7 @@ export default function App() {
         <div className="app">
             <nav>
                 <Link to="/">Tất cả job</Link>
-                {user && <Link to="/mine">Job của tôi</Link>}
+                {user && <NotificationBadge />}                       
                 {user && <Link to="/applications">Đơn của tôi</Link>}
             </nav>
             <LoginForm />
