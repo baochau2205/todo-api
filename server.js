@@ -1,5 +1,7 @@
 require("dotenv").config();
 const upload = require('./middleware/upload');
+const createError = require('./utils/createError');
+const { requireAuth } = require('./middleware/auth');
 const multer = require('multer');
 const express = require('express');
 const pool = require("./db");
@@ -16,12 +18,6 @@ const PORT = 3000;
 app.use(morgan('dev'));
 app.use(cors());
 app.use(express.json());
-
-function createError(status, message) {
-    const err = new Error(message);
-    err.status = status;
-    return err;
-}
 
 function sendSuccess(res, data, status = 200) {
     res.status(status).json({ success: true, data, error: null });
@@ -80,20 +76,6 @@ jobsRouter.post("/", requireAuth, validateJob, async (req, res, next) => {
         sendSuccess(res, job, 201);
     } catch (err) { next(err); }
 });
-
-function requireAuth(req, res, next) {
-    const header = req.headers.authorization || "";
-    const[type, token] = header.split(" ");
-    if (type !=="Bearer" || !token) {
-        return next(createError(401, "Not logged in"));
-    }
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        next(createError(401, "Invalid or expired token"));
-    }
-}
 
 jobsRouter.post("/:id/apply", requireAuth, validateId, upload.single('cv'), async (req, res, next) => {
     try {
