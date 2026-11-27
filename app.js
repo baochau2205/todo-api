@@ -13,7 +13,8 @@ const jwt = require("jsonwebtoken");
 const app = express();
 
 app.use(morgan('dev'));
-app.use(cors());
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+app.use(cors({ origin: CLIENT_URL }));
 app.use(express.json());
 
 function sendSuccess(res, data, status = 200) {
