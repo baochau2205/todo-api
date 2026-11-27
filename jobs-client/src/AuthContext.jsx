@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { apiFetch } from "./api";
 import { socket } from "./socket";
 
-const AuthContext = createContext(null);
+export const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
